@@ -9,38 +9,38 @@ __get_obj__() {
   local res="$3"
   local cmd="kubectl ${@:4}"
 
-  fzf --layout=reverse --header-lines=1 --info=inline --inline-info --ghost 'type to search...' \
-    --pointer ' ' --scrollbar '' --multi 1 --input-label " $res " --preview-label " Describe " \
-    --prompt "[ ctx=$ctx ns=$namespace ] $res > " \
-    --header $'>> ctrl-p (preview) || ctrl-i (describe) || ctrl-e (edit) || ctrl-x (delete) || ctrl-r (reload) || ctrl-l (logs) || ctrl-f (port-forward) <<\n\n' \
-    --preview-window=hidden --preview-window right,border-left \
-    --bind "start:reload:($cmd)" \
-    --bind 'enter:ignore' \
-    --bind 'ctrl-p:toggle-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
-    --bind "ctrl-r:reload:($cmd)" \
-    --bind "ctrl-i:execute:kubectl --context $ctx describe $res $name -n $ns | ${EDITOR:-vim} - -c 'setlocal buftype=nofile'" \
-    --bind "ctrl-y:execute:kubectl --context $ctx get $res $name -n $ns -o yaml | ${EDITOR:-vim} - -c 'setlocal buftype=nofile | setlocal filetype=yaml'" \
-    --bind "ctrl-e:execute:kubectl --context $ctx edit $res $name -n $ns > /dev/tty" \
-    --bind "ctrl-x:execute:echo -n 'Delete $res/$name in namespace $ns? (y/N): ' && read confirm && [[ \$confirm =~ ^[Yy]\$ ]] && kubectl --context $ctx delete $res $name -n $ns" \
-    --bind "ctrl-s:execute:echo -n 'Enter the replicas for $res/$name in namespace $ns: ' && read replicas && [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl --context $ctx scale --replicas=\$replicas $res $name -n $ns" \
-    --bind "ctrl-l:execute:kubectl --context $ctx logs $res/$name -n $ns -f > /dev/tty && echo -n 'Press any key to continue:' && read" \
-    --bind "ctrl-f:execute:echo -n 'Enter local:remote port (e.g., 8080:80): ' && read ports && kubectl --context $ctx port-forward $name -n $ns \$ports > /dev/tty" \
-    --preview "kubectl --context $ctx describe $res $name -n $ns"
+  fzf --layout=reverse --header-lines=1 --info='inline: | ' --ghost='type to search...' \
+    --pointer=' ' --scrollbar='' --multi $([[ "$2" == "all" ]] && echo --multi=1) \
+    --prompt="[ ctx=$ctx ns=$namespace ] $res > " \
+    --header=$'>> C-e (edit) || C-f (port-forward) || C-l (logs) || C-o (describe) || C-p (preview) || C-r (reload) || C-s (scale) || C-x (delete) <<\n' \
+    --preview-window=hidden,right,border-left \
+    --bind="start:reload:($cmd)" \
+    --bind='enter:ignore' \
+    --bind='ctrl-p:toggle-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
+    --bind="ctrl-r:reload:($cmd)" \
+    --bind="ctrl-o:execute-multi:kubectl --context $ctx describe $res $name -n $ns | ${EDITOR:-vim} - -c 'setlocal buftype=nofile'" \
+    --bind="ctrl-y:execute-multi:kubectl --context $ctx get $res $name -n $ns -o yaml | ${EDITOR:-vim} - -c 'setlocal buftype=nofile | setlocal filetype=yaml'" \
+    --bind="ctrl-e:execute-multi:kubectl --context $ctx edit $res $name -n $ns" \
+    --bind="ctrl-x:execute-multi:cc='kubectl --context=$ctx -n=$ns delete $res $name' && echo \${cc} && echo -n \"Run the command above? (y/N): \" && read confirm && [[ \$confirm =~ ^[Yy]\$ ]] && eval \$cc" \
+    --bind="ctrl-s:execute-multi:echo -n 'Enter the replicas: ' && read replicas && [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl --context $ctx scale --replicas=\$replicas $res $name -n $ns" \
+    --bind="ctrl-l:execute:kubectl --context $ctx logs $res/$name -n $ns -f && echo -n 'Press any key to continue:' && read" \
+    --bind="ctrl-f:execute:echo -n 'Enter local:remote port (e.g., 8080:80): ' && read ports && kubectl --context $ctx port-forward $name -n $ns \$ports > /dev/tty" \
+    --preview="kubectl --context $ctx describe $res $name -n $ns"
 }
 
 # Function to show resource types
 __list_resource_types() {
   local cmd="kubectl api-resources --verbs=list -o wide | sort"
 
-  resource=$(fzf --layout=reverse -m --header-lines=1 --info=inline \
-    --prompt "[ ctx=$(kubectl config current-context) ns=$namespace ] resources > " \
+  resource=$(fzf --layout=reverse --header-lines=1 --info='inline: | ' --ghost='type to search...' \
+    --prompt="[ ctx=$(kubectl config current-context) ns=$namespace ] resources > " \
     --header=$'>> select Kubernetes resource type || CTRL-D (exit) <<\n\n' \
-    --preview-window=hidden \
-    --bind "start:reload:($cmd)" \
-    --bind "ctrl-r:reload:($cmd)" \
-    --bind 'ctrl-p:toggle-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
-    --bind 'enter:become:(echo {1})' \
-    --preview 'kubectl explain {1}')
+    --preview-window=hidden,right,border-left \
+    --bind="start:reload:($cmd)" \
+    --bind="ctrl-r:reload:($cmd)" \
+    --bind='ctrl-p:toggle-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
+    --bind='enter:become:(echo {1})' \
+    --preview='kubectl explain {1}')
 
   context="${context:-$(kubectl config current-context)}"
   namespace="${namespace:-$(kubectl --context $context config view --minify --output 'jsonpath={..namespace}')}"
