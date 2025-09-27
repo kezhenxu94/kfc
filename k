@@ -141,8 +141,8 @@ k() {
       )
       [[ -n "$ns" ]] && kubectl config set contexts.$ctx.namespace $ns "$@"
       ;;
-    get)
-      if [[ -n "$output" && "$output" != "wide" || -z "$resource_type" ]]; then
+    *)
+      if [[ -n "$output" && "$output" != "wide" || -z "$resource_type" || -z "$found_get" ]]; then
         kubectl "$@"
         return
       fi
@@ -152,10 +152,6 @@ k() {
       namespace="${namespace:-default}"
 
       __get_obj__ "$context" "$namespace" "$resource_type" "$@"
-      ;;
-    *)
-      kubectl "$@"
-      ;;
   esac
 }
 
