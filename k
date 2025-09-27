@@ -2,6 +2,22 @@
 
 set -e +x
 
+SCRIPT_FILE=$(realpath "$0")
+
+__set_image__() {
+  local ctx="$1"
+  local ns="$2"
+  local res="$3"
+  local name="$4"
+  kubectl --context $ctx -n $ns get $res/$name -o go-template='{{range .spec.template.spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}{{range .spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}' |
+    fzf --layout=reverse --info='inline: | ' --ghost='type to search containers' \
+    --pointer=' ' --scrollbar='' --prompt='container: ' --delimiter=' ' \
+    --bind="enter:execute:
+      image={2}
+      vared -p 'New image for container {1}: ' -c image && echo \"Setting image to \$image\" && \
+        kubectl --context $ctx -n $ns set image $res/$name {1}=\$image && echo -n 'Press any key to continue:' && read"
+}
+
 __get_obj__() {
   local ctx="$1"
   local ns=$([[ "$2" == "all" ]] && echo "{1} " || echo "$2")
@@ -12,12 +28,13 @@ __get_obj__() {
   fzf --layout=reverse --header-lines=1 --info='inline: | ' --ghost='type to search...' \
     --pointer=' ' --scrollbar='' --multi $([[ "$2" == "all" ]] && echo --multi=1) \
     --prompt="[ ctx=$ctx ns=$namespace ] $res > " \
-    --header=$'>> C-e (edit) || C-f (port-forward) || C-l (logs) || C-o (describe) || C-p (preview) || C-r (reload) || C-s (scale) || C-x (delete) <<\n' \
+    --header=$'>> C-e (edit) || C-f (port-forward) || C-l (logs) || C-i (image) || C-o (describe) || C-p (preview) || C-r (reload) || C-s (scale) || C-x (delete) <<\n' \
     --preview-window=hidden,right,border-left \
-    --bind="start:reload:($cmd)" \
+    --bind="start:reload:$cmd" \
     --bind='enter:ignore' \
     --bind='ctrl-p:toggle-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
-    --bind="ctrl-r:reload:($cmd)" \
+    --bind="ctrl-r:reload:$cmd" \
+    --bind="ctrl-m:execute:source $SCRIPT_FILE && __set_image__ $ctx $ns $res $name" \
     --bind="ctrl-o:execute-multi:kubectl --context $ctx describe $res $name -n $ns | ${EDITOR:-vim} - -c 'setlocal buftype=nofile'" \
     --bind="ctrl-y:execute-multi:kubectl --context $ctx get $res $name -n $ns -o yaml | ${EDITOR:-vim} - -c 'setlocal buftype=nofile | setlocal filetype=yaml'" \
     --bind="ctrl-e:execute-multi:kubectl --context $ctx edit $res $name -n $ns" \
@@ -31,22 +48,19 @@ __get_obj__() {
 # Function to show resource types
 __list_resource_types() {
   local cmd="kubectl api-resources --verbs=list -o wide | sort"
+  local context="${context:-$(kubectl config current-context)}"
+  local namespace="${namespace:-$(kubectl --context $context config view --minify --output 'jsonpath={..namespace}')}"
+  local namespace="${namespace:-default}"
 
-  resource=$(fzf --layout=reverse --header-lines=1 --info='inline: | ' --ghost='type to search...' \
+  fzf --layout=reverse --header-lines=1 --info='inline: | ' --ghost='type to search...' \
     --prompt="[ ctx=$(kubectl config current-context) ns=$namespace ] resources > " \
     --header=$'>> select Kubernetes resource type || CTRL-D (exit) <<\n\n' \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:($cmd)" \
     --bind="ctrl-r:reload:($cmd)" \
     --bind='ctrl-p:toggle-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
-    --bind='enter:become:(echo {1})' \
-    --preview='kubectl explain {1}')
-
-  context="${context:-$(kubectl config current-context)}"
-  namespace="${namespace:-$(kubectl --context $context config view --minify --output 'jsonpath={..namespace}')}"
-  namespace="${namespace:-default}"
-
-  [[ -n "$resource" ]] && __get_obj__ "$context" "$namespace" "$resource" "get $resource -n $namespace -o wide"
+    --bind="enter:execute:(source $SCRIPT_FILE && __get_obj__ $context $namespace {1} \"get {1} -n $namespace -o wide\")" \
+    --preview='kubectl explain {1}'
 }
 
 # Main kubectl wrapper function
@@ -155,14 +169,22 @@ k() {
   esac
 }
 
-if ! command -v kubectl >/dev/null 2>&1; then
-  echo "Error: kubectl is not installed or not in PATH"
-  exit 1
-fi
+main() {
+  if ! command -v kubectl >/dev/null 2>&1; then
+    echo "Error: kubectl is not installed or not in PATH"
+    exit 1
+  fi
 
-if ! command -v fzf >/dev/null 2>&1; then
-  echo "Error: fzf is not installed or not in PATH"
-  exit 1
-fi
+  if ! command -v fzf >/dev/null 2>&1; then
+    echo "Error: fzf is not installed or not in PATH"
+    exit 1
+  fi
 
-k "$@"
+  k "$@"
+}
+
+(
+  [[ -n $ZSH_VERSION && $ZSH_EVAL_CONTEXT =~ :file$ ]] || 
+  [[ -n $KSH_VERSION && "$(cd -- "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")" != "$(cd -- "$(dirname -- "${.sh.file}")" && pwd -P)/$(basename -- "${.sh.file}")" ]] || 
+  [[ -n $BASH_VERSION ]] && (return 0 2>/dev/null)
+) || main "$@"
