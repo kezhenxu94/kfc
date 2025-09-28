@@ -18,6 +18,17 @@ __set_image__() {
         kubectl --context $ctx -n $ns set image $res/$name {1}=\$image && echo -n 'Press any key to continue:' && read"
 }
 
+__ssh_into__() {
+  local ctx="$1"
+  local ns="$2"
+  local res="$3"
+  local name="$4"
+  kubectl --context $ctx -n $ns get $res/$name -o go-template='{{range .spec.template.spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}{{range .spec.containers}}{{.name}}{{"\n"}}{{end}}' |
+    fzf --layout=reverse --info='inline: | ' --ghost='type to search containers' \
+    --pointer=' ' --scrollbar='' --prompt='container: ' --delimiter=' ' \
+    --bind="enter:execute:kubectl --context $ctx -n $ns exec -it $res/$name -c {1} -- sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
+}
+
 __get_obj__() {
   local ctx="$1"
   local ns=$([[ "$2" == "all" ]] && echo "{1} " || echo "$2")
@@ -28,7 +39,7 @@ __get_obj__() {
   fzf --layout=reverse --header-lines=1 --info='inline: | ' --ghost='type to search...' \
     --pointer=' ' --scrollbar='' --multi $([[ "$2" == "all" ]] && echo --multi=1) \
     --prompt="[ ctx=$ctx ns=$namespace ] $res > " \
-    --header=$'>> C-e (edit) || C-f (port-forward) || C-l (logs) || C-i (image) || C-o (describe) || C-p (preview) || C-r (reload) || C-s (scale) || C-x (delete) <<\n' \
+    --header=">> C-e (edit) || C-f (port-forward) || C-l (logs) || C-i (image) || C-o (describe) || C-p (preview) || C-r (reload) || C-s ($([[ "$res" == po* ]] && echo ssh || echo scale)) || C-x (delete) <<\n" \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
     --bind='enter:ignore' \
@@ -39,7 +50,13 @@ __get_obj__() {
     --bind="ctrl-y:execute-multi:kubectl --context $ctx get $res $name -n $ns -o yaml | ${EDITOR:-vim} - -c 'setlocal buftype=nofile | setlocal filetype=yaml'" \
     --bind="ctrl-e:execute-multi:kubectl --context $ctx edit $res $name -n $ns" \
     --bind="ctrl-x:execute-multi:cc='kubectl --context=$ctx -n=$ns delete $res $name' && echo \${cc} && echo -n \"Run the command above? (y/N): \" && read confirm && [[ \$confirm =~ ^[Yy]\$ ]] && eval \$cc" \
-    --bind="ctrl-s:execute-multi:echo -n 'Enter the replicas: ' && read replicas && [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl --context $ctx scale --replicas=\$replicas $res $name -n $ns" \
+    --bind="ctrl-s:execute-multi:
+      if [[ "$res" == po* ]]; then
+        source $SCRIPT_FILE && __ssh_into__ $ctx $ns $res $name > /dev/tty
+      else
+        echo -n 'Enter the replicas: ' && read replicas && [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl --context $ctx scale --replicas=\$replicas $res $name -n $ns
+      fi
+    " \
     --bind="ctrl-l:execute:kubectl --context $ctx logs $res/$name -n $ns -f && echo -n 'Press any key to continue:' && read" \
     --bind="ctrl-f:execute:echo -n 'Enter local:remote port (e.g., 8080:80): ' && read ports && kubectl --context $ctx port-forward $name -n $ns \$ports > /dev/tty" \
     --preview="kubectl --context $ctx describe $res $name -n $ns"
