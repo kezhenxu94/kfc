@@ -36,10 +36,10 @@ __get_obj__() {
   local res="$3"
   local cmd="kubectl ${@:4}"
 
-  fzf --layout=reverse --header-lines=1 --info='inline: | ' --ghost='type to search...' \
+  fzf --layout=reverse --header-lines=1 --info='inline: | ' --separator='' --ghost='type to search...' \
     --pointer=' ' --scrollbar='' --multi $([[ "$2" == "all" ]] && echo --multi=1) \
     --prompt="[ ctx=$ctx ns=$namespace ] $res > " \
-    --header=">> C-e (edit) || C-f (port-forward) || C-l (logs) || C-i (image) || C-o (describe) || C-p (preview) || C-r (reload) || C-s ($([[ "$res" == po* ]] && echo ssh || echo scale)) || C-x (delete) <<\n" \
+    --header=">> C-e (edit) || C-f (port-forward) || C-l (logs) || C-i (image) || C-o (describe) || C-p (preview) || C-r (reload) || C-s ($([[ "$res" == po* ]] && echo ssh || echo scale)) || C-x (delete) <<" \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
     --bind='enter:ignore' \
