@@ -31,35 +31,44 @@ __ssh_into__() {
 
 __get_obj__() {
   local ctx="$1"
-  local ns=$([[ "$2" == "all" ]] && echo "{1} " || echo "$2")
-  local name=$([[ "$2" == "all" ]] && echo "{2}" || echo "{1}")
+  local ns=$([[ "$2" == "all" ]] && echo "{2} " || echo "$2")
+  local name=$([[ "$2" == "all" ]] && echo "{3}" || echo "{2}")
   local res="$3"
-  local cmd="kubectl ${@:4}"
+  local cmd="kubectl ${@:4} | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
 
-  fzf --layout=reverse --header-lines=1 --info='inline: | ' --separator='' --ghost='type to search...' \
+  fzf --layout=reverse --header-lines=1 --info='inline: | ' -d " +" --separator='' --ghost='type to search, type :resource<C-r> to reload other resources, like :pods<C-r>' --with-nth="2.." \
     --pointer=' ' --scrollbar='' --multi $([[ "$2" == "all" ]] && echo --multi=1) \
     --prompt="[ ctx=$ctx ns=$namespace ] $res > " \
-    --header=">> C-e (edit) || C-f (port-forward) || C-l (logs) || C-i (image) || C-o (describe) || C-p (preview) || C-r (reload) || C-s ($([[ "$res" == po* ]] && echo ssh || echo scale)) || C-x (delete) <<" \
+    --header=">> C-e (edit) || C-f (port-forward) || C-l (logs) || C-m (image) || C-o (describe) || C-p (preview) || C-r (reload) || C-s (ssh/scale) || C-x (delete) <<" \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
     --bind='enter:ignore' \
     --bind='ctrl-p:toggle-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
-    --bind="ctrl-r:reload:$cmd" \
-    --bind="ctrl-m:execute:source $SCRIPT_FILE && __set_image__ $ctx $ns $res $name" \
-    --bind="ctrl-o:execute-multi:kubectl --context $ctx describe $res $name -n $ns | ${EDITOR:-vim} - -c 'setlocal buftype=nofile'" \
-    --bind="ctrl-y:execute-multi:kubectl --context $ctx get $res $name -n $ns -o yaml | ${EDITOR:-vim} - -c 'setlocal buftype=nofile | setlocal filetype=yaml'" \
-    --bind="ctrl-e:execute-multi:kubectl --context $ctx edit $res $name -n $ns" \
-    --bind="ctrl-x:execute-multi:cc='kubectl --context=$ctx -n=$ns delete $res $name' && echo \${cc} && echo -n \"Run the command above? (y/N): \" && read confirm && [[ \$confirm =~ ^[Yy]\$ ]] && eval \$cc" \
+    --bind="ctrl-r:reload(
+        if [[ {q} == :* ]]; then
+          res=\$(echo {q} | sed 's#^:##')
+          kubectl --context $ctx get \$res \$([[ \"$2\" == all ]] && echo '-A' || echo '-n $2') -o wide | sed -e '1s#^#TYPE  #' -e '2,\$s#^#'"\$res"'  #';
+        else
+          $cmd;
+        fi
+      )+transform-prompt(echo -n \"[ ctx=$ctx ns=$namespace ] \$([[ {q} == :* ]] && echo {q} | sed 's#^:##' || echo $res) > \")+transform-query(
+        [[ {q} == :* ]] && echo || echo {q}
+      )" \
+    --bind="ctrl-m:execute:source $SCRIPT_FILE && __set_image__ $ctx $ns {1} $name" \
+    --bind="ctrl-o:execute-multi:kubectl --context $ctx describe {1} $name -n $ns | ${EDITOR:-vim} - -c 'setlocal buftype=nofile'" \
+    --bind="ctrl-y:execute-multi:kubectl --context $ctx get {1} $name -n $ns -o yaml | ${EDITOR:-vim} - -c 'setlocal buftype=nofile | setlocal filetype=yaml'" \
+    --bind="ctrl-e:execute-multi:kubectl --context $ctx edit {1} $name -n $ns" \
+    --bind="ctrl-x:execute-multi:cc='kubectl --context=$ctx -n=$ns delete {1} $name' && echo \${cc} && echo -n \"Run the command above? (y/N): \" && read confirm && [[ \$confirm =~ ^[Yy]\$ ]] && eval \$cc" \
     --bind="ctrl-s:execute-multi:
-      if [[ "$res" == po* ]]; then
-        source $SCRIPT_FILE && __ssh_into__ $ctx $ns $res $name > /dev/tty
+      if [[ {1} == po* ]]; then
+        source $SCRIPT_FILE && __ssh_into__ $ctx $ns {1} $name > /dev/tty
       else
-        echo -n 'Enter the replicas: ' && read replicas && [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl --context $ctx scale --replicas=\$replicas $res $name -n $ns
+        echo -n 'Enter the replicas: ' && read replicas && [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl --context $ctx scale --replicas=\$replicas {1} $name -n $ns
       fi
     " \
-    --bind="ctrl-l:execute:kubectl --context $ctx logs $res/$name -n $ns -f && echo -n 'Press any key to continue:' && read" \
+    --bind="ctrl-l:execute:kubectl --context $ctx logs {1}/$name -n $ns -f && echo -n 'Press any key to continue:' && read" \
     --bind="ctrl-f:execute:echo -n 'Enter local:remote port (e.g., 8080:80): ' && read ports && kubectl --context $ctx port-forward $name -n $ns \$ports > /dev/tty" \
-    --preview="kubectl --context $ctx describe $res $name -n $ns"
+    --preview="kubectl --context $ctx describe {1} $name -n $ns"
 }
 
 # Function to show resource types
