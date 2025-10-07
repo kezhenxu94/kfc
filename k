@@ -31,8 +31,8 @@ __ssh_into__() {
 
 __get_obj__() {
   local ctx="$1"
-  local ns=$([[ "$2" == "all" ]] && echo "{2} " || echo "$2")
-  local name=$([[ "$2" == "all" ]] && echo "{3}" || echo "{2}")
+  local ns=$([[ "$2" == "all" ]] && echo "{+2} " || echo "$2")
+  local name=$([[ "$2" == "all" ]] && echo "{+3}" || echo "{+2}")
   local res="$3"
   local cmd="kubectl ${@:4} | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
 
@@ -55,11 +55,11 @@ __get_obj__() {
         [[ {q} == :* ]] && echo || echo {q}
       )" \
     --bind="ctrl-m:execute:source $SCRIPT_FILE && __set_image__ $ctx $ns {1} $name" \
-    --bind="ctrl-o:execute-multi:kubectl --context $ctx describe {1} $name -n $ns | ${EDITOR:-vim} - -c 'setlocal buftype=nofile'" \
-    --bind="ctrl-y:execute-multi:kubectl --context $ctx get {1} $name -n $ns -o yaml | ${EDITOR:-vim} - -c 'setlocal buftype=nofile | setlocal filetype=yaml'" \
-    --bind="ctrl-e:execute-multi:kubectl --context $ctx edit {1} $name -n $ns" \
-    --bind="ctrl-x:execute-multi:cc='kubectl --context=$ctx -n=$ns delete {1} $name' && echo \${cc} && echo -n \"Run the command above? (y/N): \" && read confirm && [[ \$confirm =~ ^[Yy]\$ ]] && eval \$cc" \
-    --bind="ctrl-s:execute-multi:
+    --bind="ctrl-o:execute:kubectl --context $ctx describe {1} $name -n $ns | ${EDITOR:-vim} - -c 'setlocal buftype=nofile'" \
+    --bind="ctrl-y:execute:kubectl --context $ctx get {1} $name -n $ns -o yaml | ${EDITOR:-vim} - -c 'setlocal buftype=nofile | setlocal filetype=yaml'" \
+    --bind="ctrl-e:execute:kubectl --context $ctx edit {1} $name -n $ns" \
+    --bind="ctrl-x:execute:cc='kubectl --context=$ctx -n=$ns delete {1} $name' && echo \${cc} && echo -n \"Run the command above? (y/N): \" && read confirm && [[ \$confirm =~ ^[Yy]\$ ]] && eval \$cc" \
+    --bind="ctrl-s:execute:
       if [[ {1} == po* ]]; then
         source $SCRIPT_FILE && __ssh_into__ $ctx $ns {1} $name > /dev/tty
       else
