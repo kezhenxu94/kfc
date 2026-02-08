@@ -57,6 +57,9 @@ __switch_type__() {
   local ctx="$1" ns="$2" all_ns="$3"
   local ns_flag=$([[ "$all_ns" == true ]] && echo '-A' || echo "-n $ns")
   local cmd="kubectl api-resources --verbs=list -o wide | sort"
+  local state_file=$(mktemp)
+  echo "hidden" > "$state_file"
+  trap 'rm -f "$state_file"' EXIT
 
   __fzf_base__ --header-lines=1 --ghost='type to search resource types...' \
     --prompt="[$ctx|$ns] resources> " \
@@ -64,7 +67,9 @@ __switch_type__() {
     --preview-window=hidden,right,border-left \
     --bind="start:reload:($cmd)" \
     --bind="ctrl-r:reload:($cmd)" \
-    --bind='ctrl-p:toggle-preview+refresh-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
+    --bind="ctrl-p:toggle-preview+transform([[ \$(cat $state_file) = hidden ]] && echo visible > $state_file || echo hidden > $state_file)" \
+    --bind="ctrl-u:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-up || echo half-page-up)" \
+    --bind="ctrl-d:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-down || echo half-page-down)" \
     --bind="enter:become(
       source $SCRIPT_FILE && __get_obj__ $ctx $ns {1} \
         \"--context $ctx get {1} $ns_flag -o wide\"
@@ -88,6 +93,9 @@ __get_obj__() {
   local ns_field=$($all_ns && echo "{+2}" || echo "$ns_arg")
   local name_field=$($all_ns && echo "{+3}" || echo "{+2}")
   local cmd="kubectl $* | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
+  local state_file=$(mktemp)
+  echo "hidden" > "$state_file"
+  trap 'rm -f "$state_file"' EXIT
 
   __fzf_base__ --header-lines=1 -d " +" --separator='' --with-nth="2.." \
     --ghost='C-t switch type | C-n switch namespace | C-r reload' \
@@ -96,7 +104,9 @@ __get_obj__() {
     --header=">> enter (describe) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (image) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<" \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
-    --bind='ctrl-p:toggle-preview+refresh-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
+    --bind="ctrl-p:toggle-preview+transform([[ \$(cat $state_file) = hidden ]] && echo visible > $state_file || echo hidden > $state_file)" \
+    --bind="ctrl-u:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-up || echo half-page-up)" \
+    --bind="ctrl-d:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-down || echo half-page-down)" \
     --bind="ctrl-r:reload($cmd)" \
     --bind="ctrl-t:become(source $SCRIPT_FILE && __switch_type__ $ctx $ns_arg $all_ns)" \
     --bind="ctrl-n:become(source $SCRIPT_FILE && __switch_ns__ $ctx $res)" \
