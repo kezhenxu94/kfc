@@ -14,6 +14,10 @@ __fzf_base__() {
   fzf --layout=reverse --info='inline: | ' --pointer=' ' --scrollbar='' "$@"
 }
 
+__editor_base__() {
+  nvim -R -c "set nomodifiable" -c "nnoremap q :q<CR>" "$@"
+}
+
 __list_containers__() {
   local ctx="$1" ns="$2" res="$3" name="$4"
   kubectl --context "$ctx" -n "$ns" get "$res/$name" \
@@ -37,6 +41,16 @@ __ssh_into__() {
     __fzf_base__ --ghost='type to search containers' --prompt='container: ' --delimiter=' ' \
     --bind="enter:execute:kubectl --context $ctx -n $ns exec -it $res/$name -c {1} \
       -- sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
+}
+
+__view_yaml__() {
+  local ctx="$1" ns="$2" res="$3" name="$4"
+  kubectl --context "$ctx" -n "$ns" get "$res/$name" -o yaml 2>/dev/null | __editor_base__ -c "set ft=yaml" - > /dev/tty
+}
+
+__describe__() {
+  local ctx="$1" ns="$2" res="$3" name="$4"
+  kubectl --context "$ctx" -n "$ns" describe "$res/$name" 2>/dev/null | __editor_base__ - > /dev/tty
 }
 
 __switch_type__() {
@@ -86,8 +100,8 @@ __get_obj__() {
     --bind="ctrl-r:reload($cmd)+clear-query" \
     --bind="ctrl-t:become(source $SCRIPT_FILE && __switch_type__ $ctx $ns_arg $all_ns)" \
     --bind="ctrl-n:become(source $SCRIPT_FILE && __switch_ns__ $ctx $res)" \
-    --bind="enter:execute:kubectl --context $ctx describe {1} $name_field -n $ns_field | \${EDITOR:-less}" \
-    --bind="ctrl-y:execute:kubectl --context $ctx get {1} $name_field -n $ns_field -o yaml | \${EDITOR:-less}" \
+    --bind="enter:execute:source $SCRIPT_FILE && __describe__ $ctx $ns_field {1} $name_field" \
+    --bind="ctrl-y:execute:source $SCRIPT_FILE && __view_yaml__ $ctx $ns_field {1} $name_field" \
     --bind="ctrl-e:execute:kubectl --context $ctx edit {1} $name_field -n $ns_field" \
     --bind="ctrl-o:execute:source $SCRIPT_FILE && __set_image__ $ctx $ns_field {1} $name_field" \
     --bind="ctrl-x:execute:
