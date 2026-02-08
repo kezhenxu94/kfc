@@ -97,7 +97,7 @@ __get_obj__() {
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
     --bind='ctrl-p:toggle-preview+refresh-preview,ctrl-u:preview-half-page-up,ctrl-d:preview-half-page-down' \
-    --bind="ctrl-r:reload($cmd)+clear-query" \
+    --bind="ctrl-r:reload($cmd)" \
     --bind="ctrl-t:become(source $SCRIPT_FILE && __switch_type__ $ctx $ns_arg $all_ns)" \
     --bind="ctrl-n:become(source $SCRIPT_FILE && __switch_ns__ $ctx $res)" \
     --bind="enter:execute:source $SCRIPT_FILE && __describe__ $ctx $ns_field {1} $name_field" \
