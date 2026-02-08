@@ -59,7 +59,7 @@ __switch_type__() {
   local cmd="kubectl api-resources --verbs=list -o wide | sort"
 
   __fzf_base__ --header-lines=1 --ghost='type to search resource types...' \
-    --prompt="[ ctx=$ctx ns=$ns ] resources > " \
+    --prompt="[$ctx|$ns] resources> " \
     --header=$'>> enter (browse) | C-r (reload) | C-p (preview) <<\n' \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:($cmd)" \
@@ -92,7 +92,7 @@ __get_obj__() {
   __fzf_base__ --header-lines=1 -d " +" --separator='' --with-nth="2.." \
     --ghost='C-t switch type | C-n switch namespace | C-r reload' \
     --multi $($all_ns && echo --multi=1) \
-    --prompt="[ ctx=$ctx ns=$ns_arg ] $res > " \
+    --prompt="[$ctx|$ns_arg] $res > " \
     --header=">> enter (describe) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (image) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<" \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
@@ -163,7 +163,7 @@ k() {
       local ctx=$(
         kubectl config get-contexts "$@" |
           __fzf_base__ --header-lines=1 \
-          --prompt "[ ctx=$ctx_current ns=${ns_current:-default} ] contexts > " \
+          --prompt "[$ctx_current|${ns_current:-default}] contexts> " \
           --bind='enter:become:(echo {1})'
       )
       [[ -n "$ctx" && "$ctx" != "*" ]] && kubectl config use-context "$ctx" "$@"
@@ -175,7 +175,7 @@ k() {
       local ns=$(
         kubectl get ns "$@" |
           __fzf_base__ --header-lines=1 \
-          --prompt "[ ctx=$ctx ns=${ns_current:-default} ] namespaces > " \
+          --prompt "[$ctx|${ns_current:-default}] namespaces> " \
           --bind='enter:become:(echo {1})'
       )
       [[ -n "$ns" ]] && kubectl config set "contexts.$ctx.namespace" "$ns" "$@"
