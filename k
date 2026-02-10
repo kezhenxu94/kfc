@@ -97,11 +97,20 @@ __get_obj__() {
   echo "hidden" > "$state_file"
   trap 'rm -f "$state_file"' EXIT
 
+  local enter_bind header
+  if [[ -n "$KFC_SELECT" ]]; then
+    enter_bind="enter:become(printf '-n %s %s' $ns_field $name_field)"
+    header=">> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (image) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<"
+  else
+    enter_bind="enter:execute:source $SCRIPT_FILE && __describe__ $ctx $ns_field {1} $name_field"
+    header=">> enter (describe) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (image) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<"
+  fi
+
   __fzf_base__ --header-lines=1 -d " +" --separator='' --with-nth="2.." \
     --ghost='C-t switch type | C-n switch namespace | C-r reload' \
     --multi $($all_ns && echo --multi=1) \
     --prompt="[$ctx|$ns_arg] $res > " \
-    --header=">> enter (describe) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (image) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<" \
+    --header="$header" \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
     --bind="ctrl-p:toggle-preview+transform([[ \$(cat $state_file) = hidden ]] && echo visible > $state_file || echo hidden > $state_file)" \
@@ -110,7 +119,7 @@ __get_obj__() {
     --bind="ctrl-r:reload($cmd)" \
     --bind="ctrl-t:become(source $SCRIPT_FILE && __switch_type__ $ctx $ns_arg $all_ns)" \
     --bind="ctrl-n:become(source $SCRIPT_FILE && __switch_ns__ $ctx $res)" \
-    --bind="enter:execute:source $SCRIPT_FILE && __describe__ $ctx $ns_field {1} $name_field" \
+    --bind="$enter_bind" \
     --bind="ctrl-y:execute:source $SCRIPT_FILE && __view_yaml__ $ctx $ns_field {1} $name_field" \
     --bind="ctrl-e:execute:kubectl --context $ctx edit {1} $name_field -n $ns_field" \
     --bind="ctrl-o:execute:source $SCRIPT_FILE && __set_image__ $ctx $ns_field {1} $name_field" \
