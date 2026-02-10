@@ -55,7 +55,8 @@ __describe__() {
 
 __switch_type__() {
   local ctx="$1" ns="$2" all_ns="$3"
-  local ns_flag=$([[ "$all_ns" == true ]] && echo '-A' || echo "-n $ns")
+  local ns_flag
+  if [[ "$all_ns" == true ]]; then ns_flag='-A'; else ns_flag="-n $ns"; fi
   local cmd="kubectl api-resources --verbs=list -o wide | sort"
   local state_file=$(mktemp)
   echo "hidden" > "$state_file"
@@ -90,8 +91,12 @@ __get_obj__() {
   local ctx="$1" ns_arg="$2" res="$3"
   shift 3
   local all_ns=$([[ "$ns_arg" == "all" ]] && echo true || echo false)
-  local ns_field=$($all_ns && echo "{+2}" || echo "$ns_arg")
-  local name_field=$($all_ns && echo "{+3}" || echo "{+2}")
+  local ns_field name_field multi_flag=""
+  if [[ "$all_ns" == true ]]; then
+    ns_field="{+2}" name_field="{+3}" multi_flag="--multi=1"
+  else
+    ns_field="$ns_arg" name_field="{+2}"
+  fi
   local cmd="kubectl $* | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
   local state_file=$(mktemp)
   echo "hidden" > "$state_file"
@@ -108,7 +113,7 @@ __get_obj__() {
 
   __fzf_base__ --header-lines=1 -d " +" --separator='' --with-nth="2.." \
     --ghost='C-t switch type | C-n switch namespace | C-r reload' \
-    --multi $($all_ns && echo --multi=1) \
+    --multi $multi_flag \
     --prompt="[$ctx|$ns_arg] $res > " \
     --header="$header" \
     --preview-window=hidden,right,border-left \
@@ -177,8 +182,8 @@ k() {
   case "$1" in
     ctx)
       shift
-      local ctx_current="${context:-$(kubectl config current-context)}"
-      local ns_current="${namespace:-$(kubectl --context "$ctx_current" config view --minify --output 'jsonpath={..namespace}')}"
+      local ctx_current ns_current
+      read -r ctx_current ns_current <<< "$(__resolve_ctx_ns__ "$context" "$namespace")"
       local ctx=$(
         kubectl config get-contexts "$@" |
           __fzf_base__ --header-lines=1 \
@@ -189,8 +194,8 @@ k() {
       ;;
     ns)
       shift
-      local ctx="${context:-$(kubectl config current-context)}"
-      local ns_current="${namespace:-$(kubectl --context "$ctx" config view --minify --output 'jsonpath={..namespace}')}"
+      local ctx ns_current
+      read -r ctx ns_current <<< "$(__resolve_ctx_ns__ "$context" "$namespace")"
       local ns=$(
         kubectl get ns "$@" |
           __fzf_base__ --header-lines=1 \
@@ -200,6 +205,8 @@ k() {
       [[ -n "$ns" ]] && kubectl config set "contexts.$ctx.namespace" "$ns" "$@"
       ;;
     *)
+      # Fall through to plain kubectl for non-get commands, missing resource types,
+      # or specific output formats (only -o wide triggers interactive mode)
       if [[ "$found_get" != true || -z "$resource_type" || ( -n "$output" && "$output" != "wide" ) ]]; then
         kubectl "$@"
         return
@@ -214,15 +221,13 @@ k() {
 }
 
 main() {
-  if ! command -v kubectl >/dev/null 2>&1; then
-    echo "Error: kubectl is not installed or not in PATH" >&2
-    exit 1
-  fi
-
-  if ! command -v fzf >/dev/null 2>&1; then
-    echo "Error: fzf is not installed or not in PATH" >&2
-    exit 1
-  fi
+  local cmd
+  for cmd in kubectl fzf; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "Error: $cmd is not installed or not in PATH" >&2
+      exit 1
+    fi
+  done
 
   k "$@"
 }
