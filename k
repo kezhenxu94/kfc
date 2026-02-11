@@ -11,7 +11,13 @@ __resolve_ctx_ns__() {
 }
 
 __fzf_base__() {
-  fzf --layout=reverse --info='inline: | ' --pointer=' ' --scrollbar='' "$@"
+  local state_file=$(mktemp)
+  echo "hidden" > "$state_file"
+  trap 'rm -f "$state_file"' EXIT
+  fzf --layout=reverse --info='inline: | ' --pointer=' ' --scrollbar='' "$@" \
+    --bind="ctrl-p:toggle-preview+transform([[ \$(cat $state_file) = hidden ]] && echo visible > $state_file || echo hidden > $state_file)" \
+    --bind="ctrl-u:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-up || echo half-page-up)" \
+    --bind="ctrl-d:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-down || echo half-page-down)"
 }
 
 __editor_base__() {
@@ -19,48 +25,43 @@ __editor_base__() {
 }
 
 __list_containers__() {
-  local ctx="$1" ns="$2" res="$3" name="$4"
-  kubectl --context "$ctx" -n "$ns" get "$res/$name" \
-    -o go-template='{{range .spec.template.spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}{{range .spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}'
+  local ctx="$1" res="$2" name="$3"; shift 3
+  kubectl --context "$ctx" "$@" get "$res/$name" \
+    -o go-template='{{range .spec.template.spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}{{range .spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}' 2>/dev/null
+}
+
+__pick_container__() {
+  local ctx="$1" res="$2" name="$3"; shift 3
+  local enter_action="$1"; shift
+  __list_containers__ "$ctx" "$res" "$name" "$@" |
+    __fzf_base__ --ghost='type to search containers' --prompt='container: ' --delimiter=' ' \
+    --bind="enter:execute:$enter_action"
 }
 
 __set_image__() {
-  local ctx="$1" ns="$2" res="$3" name="$4"
-  __list_containers__ "$ctx" "$ns" "$res" "$name" |
-    __fzf_base__ --ghost='type to search containers' --prompt='container: ' --delimiter=' ' \
-    --bind="enter:execute:
+  local ctx="$1" res="$2" name="$3"; shift 3
+  __pick_container__ "$ctx" "$res" "$name" "
       image={2}
       vared -p 'New image for container {1}: ' -c image && echo \"Setting image to \$image\" && \
-        kubectl --context $ctx -n $ns set image $res/$name {1}=\$image && \
-        echo -n 'Press any key to continue:' && read"
+        kubectl --context $ctx $* set image $res/$name {1}=\$image && \
+        echo -n 'Press any key to continue:' && read" "$@"
 }
 
 __ssh_into__() {
-  local ctx="$1" ns="$2" res="$3" name="$4"
-  __list_containers__ "$ctx" "$ns" "$res" "$name" |
-    __fzf_base__ --ghost='type to search containers' --prompt='container: ' --delimiter=' ' \
-    --bind="enter:execute:kubectl --context $ctx -n $ns exec -it $res/$name -c {1} \
-      -- sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
+  local ctx="$1" res="$2" name="$3"; shift 3
+  __pick_container__ "$ctx" "$res" "$name" \
+    "kubectl --context $ctx $* exec -it $res/$name -c {1} \
+      -- sh -c 'command -v bash >/dev/null && exec bash || exec sh'" "$@"
 }
 
 __view_yaml__() {
-  local ctx="$1" ns="$2" res="$3" name="$4"
-  kubectl --context "$ctx" -n "$ns" get "$res/$name" -o yaml 2>/dev/null | __editor_base__ -c "set ft=yaml" - > /dev/tty
-}
-
-__describe__() {
-  local ctx="$1" ns="$2" res="$3" name="$4"
-  kubectl --context "$ctx" -n "$ns" describe "$res/$name" 2>/dev/null | __editor_base__ - > /dev/tty
+  local ctx="$1" res="$2" name="$3"; shift 3
+  kubectl --context "$ctx" "$@" get "$res/$name" -o yaml 2>/dev/null | __editor_base__ -c "set ft=yaml" - > /dev/tty
 }
 
 __switch_type__() {
   local ctx="$1" ns="$2" all_ns="$3"
-  local ns_flag
-  if [[ "$all_ns" == true ]]; then ns_flag='-A'; else ns_flag="-n $ns"; fi
-  local cmd="kubectl api-resources --verbs=list -o wide | sort"
-  local state_file=$(mktemp)
-  echo "hidden" > "$state_file"
-  trap 'rm -f "$state_file"' EXIT
+  local cmd="kubectl api-resources --verbs=list -o wide 2>/dev/null | sort"
 
   __fzf_base__ --header-lines=1 --ghost='type to search resource types...' \
     --prompt="[$ctx|$ns] resources> " \
@@ -68,12 +69,17 @@ __switch_type__() {
     --preview-window=hidden,right,border-left \
     --bind="start:reload:($cmd)" \
     --bind="ctrl-r:reload:($cmd)" \
-    --bind="ctrl-p:toggle-preview+transform([[ \$(cat $state_file) = hidden ]] && echo visible > $state_file || echo hidden > $state_file)" \
-    --bind="ctrl-u:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-up || echo half-page-up)" \
-    --bind="ctrl-d:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-down || echo half-page-down)" \
     --bind="enter:become(
-      source $SCRIPT_FILE && __get_obj__ $ctx $ns {1} \
-        \"--context $ctx get {1} $ns_flag -o wide\"
+      source $SCRIPT_FILE
+      namespaced={4}
+      [[ \$namespaced != true && \$namespaced != false ]] && namespaced={3}
+      if [[ \$namespaced == false ]]; then
+        __get_obj__ $ctx $ns {1} false \"--context $ctx get {1} -o wide\"
+      elif [[ '$all_ns' == true ]]; then
+        __get_obj__ $ctx $ns {1} true \"--context $ctx get {1} -A -o wide\"
+      else
+        __get_obj__ $ctx $ns {1} true \"--context $ctx get {1} -n $ns -o wide\"
+      fi
     )" \
     --preview='kubectl explain {1}'
 }
@@ -81,69 +87,79 @@ __switch_type__() {
 __switch_ns__() {
   local ctx="$1" res="$2"
   __fzf_base__ --prompt='namespace: ' \
+    --header=$'>> enter (browse) | C-p (preview) <<\n' \
+    --preview-window=hidden,right,border-left \
+    --preview="kubectl --context $ctx describe ns {}" \
     --bind="enter:become(
-      source $SCRIPT_FILE && __get_obj__ $ctx {} $res \
+      source $SCRIPT_FILE && __get_obj__ $ctx {} $res true \
         \"--context $ctx get $res -n {} -o wide\"
-    )" < <(kubectl --context "$ctx" get ns --no-headers -o custom-columns=':metadata.name')
+    )" < <(kubectl --context "$ctx" get ns --no-headers -o custom-columns=':metadata.name' 2>/dev/null)
 }
 
 __get_obj__() {
-  local ctx="$1" ns_arg="$2" res="$3"
-  shift 3
+  local ctx="$1" ns_arg="$2" res="$3" namespaced="$4"
+  shift 4
   local all_ns=$([[ "$ns_arg" == "all" ]] && echo true || echo false)
-  local ns_field name_field multi_flag=""
+  local name_field multi_flag="" ns_flag_str=""
   if [[ "$all_ns" == true ]]; then
-    ns_field="{+2}" name_field="{+3}" multi_flag="--multi=1"
+    name_field="{+3}"; ns_flag_str="-n {+2}"; multi_flag="--multi=1"
+  elif [[ "$namespaced" == false ]]; then
+    name_field="{+2}"; ns_flag_str=""
   else
-    ns_field="$ns_arg" name_field="{+2}"
+    name_field="{+2}"; ns_flag_str="-n $ns_arg"
   fi
-  local cmd="kubectl $* | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
-  local state_file=$(mktemp)
-  echo "hidden" > "$state_file"
-  trap 'rm -f "$state_file"' EXIT
 
-  local enter_bind header
-  if [[ -n "$KFC_SELECT" ]]; then
-    enter_bind="enter:become(printf '-n %s %s' $ns_field $name_field)"
-    header=">> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (image) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<"
+  local display_ns="$ns_arg"
+  [[ "$namespaced" == false ]] && display_ns="cluster"
+  local cmd="kubectl $* 2>/dev/null | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
+
+  local enter_bind
+  if [[ -n "$ns_flag_str" ]]; then
+    enter_bind="enter:become(printf '$ns_flag_str %s' $name_field)"
   else
-    enter_bind="enter:execute:source $SCRIPT_FILE && __describe__ $ctx $ns_field {1} $name_field"
-    header=">> enter (describe) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (image) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<"
+    enter_bind="enter:become(printf '%s' $name_field)"
+  fi
+  local header=">> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (image) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<"
+
+  local ghost_text ctrl_n_bind
+  if [[ "$namespaced" == false ]]; then
+    ghost_text='C-t switch type | C-r reload'
+    ctrl_n_bind="ctrl-n:ignore"
+  else
+    ghost_text='C-t switch type | C-n switch namespace | C-r reload'
+    ctrl_n_bind="ctrl-n:become(source $SCRIPT_FILE && __switch_ns__ $ctx $res)"
   fi
 
   __fzf_base__ --header-lines=1 -d " +" --separator='' --with-nth="2.." \
-    --ghost='C-t switch type | C-n switch namespace | C-r reload' \
+    --ghost="$ghost_text" \
     --multi $multi_flag \
-    --prompt="[$ctx|$ns_arg] $res > " \
+    --prompt="[$ctx|$display_ns] $res > " \
     --header="$header" \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
-    --bind="ctrl-p:toggle-preview+transform([[ \$(cat $state_file) = hidden ]] && echo visible > $state_file || echo hidden > $state_file)" \
-    --bind="ctrl-u:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-up || echo half-page-up)" \
-    --bind="ctrl-d:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-down || echo half-page-down)" \
     --bind="ctrl-r:reload($cmd)" \
     --bind="ctrl-t:become(source $SCRIPT_FILE && __switch_type__ $ctx $ns_arg $all_ns)" \
-    --bind="ctrl-n:become(source $SCRIPT_FILE && __switch_ns__ $ctx $res)" \
+    --bind="$ctrl_n_bind" \
     --bind="$enter_bind" \
-    --bind="ctrl-y:execute:source $SCRIPT_FILE && __view_yaml__ $ctx $ns_field {1} $name_field" \
-    --bind="ctrl-e:execute:kubectl --context $ctx edit {1} $name_field -n $ns_field" \
-    --bind="ctrl-o:execute:source $SCRIPT_FILE && __set_image__ $ctx $ns_field {1} $name_field" \
+    --bind="ctrl-y:execute:source $SCRIPT_FILE && __view_yaml__ $ctx {1} $name_field $ns_flag_str" \
+    --bind="ctrl-e:execute:kubectl --context $ctx $ns_flag_str edit {1} $name_field" \
+    --bind="ctrl-o:execute:source $SCRIPT_FILE && __set_image__ $ctx {1} $name_field $ns_flag_str" \
     --bind="ctrl-x:execute:
-      cc=\"kubectl --context $ctx -n $ns_field delete {1} $name_field\"
+      cc=\"kubectl --context $ctx $ns_flag_str delete {1} $name_field\"
       echo \$cc && echo -n 'Run the command above? (y/N): ' && read confirm && \
         [[ \$confirm =~ ^[Yy]\$ ]] && eval \$cc" \
     --bind="ctrl-s:execute:
       if [[ {1} == po* ]]; then
-        source $SCRIPT_FILE && __ssh_into__ $ctx $ns_field {1} $name_field > /dev/tty
+        source $SCRIPT_FILE && __ssh_into__ $ctx {1} $name_field $ns_flag_str > /dev/tty
       else
         echo -n 'Enter the replicas: ' && read replicas && \
-          [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl --context $ctx scale --replicas=\$replicas {1} $name_field -n $ns_field
+          [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl --context $ctx $ns_flag_str scale --replicas=\$replicas {1} $name_field
       fi" \
-    --bind="ctrl-l:execute:kubectl --context $ctx logs {1}/$name_field -n $ns_field -f; \
+    --bind="ctrl-l:execute:kubectl --context $ctx $ns_flag_str logs {1}/$name_field -f; \
       echo -n 'Press any key to continue:' && read" \
     --bind="ctrl-f:execute:echo -n 'Enter local:remote port (e.g., 8080:80): ' && read ports && \
-      kubectl --context $ctx port-forward $name_field -n $ns_field \$ports > /dev/tty" \
-    --preview="kubectl --context $ctx describe {1} $name_field -n $ns_field"
+      kubectl --context $ctx $ns_flag_str port-forward $name_field \$ports > /dev/tty" \
+    --preview="kubectl --context $ctx $ns_flag_str describe {1} $name_field"
 }
 
 k() {
@@ -185,7 +201,7 @@ k() {
       local ctx_current ns_current
       read -r ctx_current ns_current <<< "$(__resolve_ctx_ns__ "$context" "$namespace")"
       local ctx=$(
-        kubectl config get-contexts "$@" |
+        kubectl config get-contexts "$@" 2>/dev/null |
           __fzf_base__ --header-lines=1 \
           --prompt "[$ctx_current|${ns_current:-default}] contexts> " \
           --bind='enter:become:(echo {1})'
@@ -197,7 +213,7 @@ k() {
       local ctx ns_current
       read -r ctx ns_current <<< "$(__resolve_ctx_ns__ "$context" "$namespace")"
       local ns=$(
-        kubectl get ns "$@" |
+        kubectl get ns "$@" 2>/dev/null |
           __fzf_base__ --header-lines=1 \
           --prompt "[$ctx|${ns_current:-default}] namespaces> " \
           --bind='enter:become:(echo {1})'
@@ -215,7 +231,15 @@ k() {
       local ctx ns
       read -r ctx ns <<< "$(__resolve_ctx_ns__ "$context" "$namespace")"
 
-      __get_obj__ "$ctx" "$ns" "$resource_type" "$@"
+      local namespaced=true
+      if [[ -z "$namespace" && "$ns" != "all" ]]; then
+        if kubectl api-resources --namespaced=false --no-headers 2>/dev/null \
+            | awk -v r="$resource_type" '$1==r||$2==r{found=1} END{exit !found}'; then
+          namespaced=false
+        fi
+      fi
+
+      __get_obj__ "$ctx" "$ns" "$resource_type" "$namespaced" "$@"
       ;;
   esac
 }
