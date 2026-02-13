@@ -1,7 +1,5 @@
 #!/usr/bin/env zsh
 
-set -e +x
-
 SCRIPT_FILE=$(realpath "$0")
 
 _run_fzf_picker() {
