@@ -56,7 +56,7 @@ _view_resource_yaml() {
 }
 
 _browse_resource_types() {
-  local ctx="$1" ns="$2" all_ns="$3"
+  local ctx="$1" ns="$2"
   local cmd="kubectl api-resources --verbs=list -o wide 2>/dev/null | sort"
 
   _run_fzf_picker --header-lines=1 --ghost='type to search resource types...' \
@@ -67,15 +67,9 @@ _browse_resource_types() {
     --bind="ctrl-r:reload:($cmd)" \
     --bind="enter:become(
       source $SCRIPT_FILE
-      namespaced={4}
+      local namespaced={4}
       [[ \$namespaced != true && \$namespaced != false ]] && namespaced={3}
-      if [[ \$namespaced == false ]]; then
-        _browse_resources $ctx $ns {1} false \"--context $ctx get {1} -o wide\"
-      elif [[ '$all_ns' == true ]]; then
-        _browse_resources $ctx $ns {1} true \"--context $ctx get {1} -A -o wide\"
-      else
-        _browse_resources $ctx $ns {1} true \"--context $ctx get {1} -n $ns -o wide\"
-      fi
+      _browse_resources $ctx $ns {1} \$namespaced
     )" \
     --preview='kubectl explain {1}'
 }
@@ -87,27 +81,27 @@ _browse_namespaces() {
     --preview-window=hidden,right,border-left \
     --preview="kubectl --context $ctx describe ns {}" \
     --bind="enter:become(
-      source $SCRIPT_FILE && _browse_resources $ctx {} $res true \
-        \"--context $ctx get $res -n {} -o wide\"
+      source $SCRIPT_FILE && _browse_resources $ctx {} $res true
     )" < <(kubectl --context "$ctx" get ns --no-headers -o custom-columns=':metadata.name' 2>/dev/null)
 }
 
 _browse_resources() {
-  local ctx="$1" ns_arg="$2" res="$3" namespaced="$4"
-  shift 4
-  local all_ns=$([[ "$ns_arg" == "all" ]] && echo true || echo false)
-  local name_field multi_flag="" ns_flag_str=""
+  local ctx="$1" ns="$2" res="$3" namespaced="$4"
+  local all_ns=$([[ "$ns" == "all" ]] && echo true || echo false)
+  local name_field multi_flag="" ns_flag_str="" kubectl_args="--context $ctx get $res -o wide"
   if [[ "$namespaced" == false ]]; then
     name_field="{2}"; ns_flag_str=""
   elif [[ "$all_ns" == true ]]; then
     name_field="{3}"; ns_flag_str="-n {2}"; multi_flag="--multi=1"
+    kubectl_args="$kubectl_args -A"
   else
-    name_field="{2}"; ns_flag_str="-n $ns_arg"
+    name_field="{2}"; ns_flag_str="-n $ns"
+    kubectl_args="$kubectl_args -n $ns"
   fi
 
-  local display_ns="$ns_arg"
+  local display_ns="$ns"
   [[ "$namespaced" == false ]] && display_ns="cluster"
-  local cmd="kubectl $* 2>/dev/null | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
+  local cmd="kubectl $kubectl_args 2>/dev/null | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
 
   local kubectl_ctx_flags="--context $ctx${ns_flag_str:+ $ns_flag_str}"
   local enter_bind="enter:become(printf '${ns_flag_str:+$ns_flag_str }%s' $name_field)"
@@ -130,7 +124,7 @@ _browse_resources() {
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
     --bind="ctrl-r:reload($cmd)" \
-    --bind="ctrl-t:become(source $SCRIPT_FILE && _browse_resource_types $ctx $ns_arg $all_ns)" \
+    --bind="ctrl-t:become(source $SCRIPT_FILE && _browse_resource_types $ctx $ns)" \
     --bind="$ctrl_n_bind" \
     --bind="$enter_bind" \
     --bind="ctrl-y:execute:source $SCRIPT_FILE && _view_resource_yaml $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str}" \
@@ -157,7 +151,7 @@ k() {
   if [[ $# -eq 0 ]]; then
     local ctx ns
     read -r ctx ns <<< "$(_get_current_context_namespace)"
-    _browse_resource_types "$ctx" "$ns" false
+    _browse_resource_types "$ctx" "$ns"
     return
   fi
 
@@ -228,7 +222,7 @@ k() {
         namespaced=false
       fi
 
-      _browse_resources "$ctx" "$ns" "$resource_type" "$namespaced" "$@"
+      _browse_resources "$ctx" "$ns" "$resource_type" "$namespaced"
       ;;
   esac
 }
