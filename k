@@ -106,11 +106,12 @@ _browse_resources() {
   local enter_bind="enter:become(printf '${ns_flag_str:+$ns_flag_str }%s' $name_field)"
   local header=">> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<"
 
-  local ghost_text ctrl_n_bind
-  if [[ "$namespaced" == false ]]; then
-    ghost_text='C-t switch type | C-r reload'
-    ctrl_n_bind="ctrl-n:ignore"
-  else
+  # Default ghost text and bindings (non-namespaced resources)
+  local ghost_text='C-t switch type | C-r reload'
+  local ctrl_n_bind='ctrl-n:ignore'
+
+  # Add namespace-switching capability for namespaced resources
+  if [[ "$namespaced" != false ]]; then
     ghost_text='C-t switch type | C-n switch namespace | C-r reload'
     ctrl_n_bind="ctrl-n:become(source $SCRIPT_FILE && _browse_namespaces $ctx $res)"
   fi
@@ -129,10 +130,11 @@ _browse_resources() {
     --bind="ctrl-y:execute:source $SCRIPT_FILE && _view_resource_yaml $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str}" \
     --bind="ctrl-e:execute:kubectl $kubectl_base_flags edit {1} $name_field" \
     --bind="ctrl-x:execute:
-      cc=\"kubectl $kubectl_base_flags delete {1} $name_field\"
-      echo \$cc && echo -n 'Run the command above? (y/N): ' && read confirm && \
-        [[ \$confirm =~ ^[Yy]\$ ]] && eval \$cc" \
+      delete_cmd=\"kubectl $kubectl_base_flags delete {1} $name_field\"
+      echo \$delete_cmd && echo -n 'Run the command above? (y/N): ' && read confirm && \
+        [[ \$confirm =~ ^[Yy]\$ ]] && eval \$delete_cmd" \
     --bind="ctrl-s:execute:
+      # 'po*' matches pod/pods (kubectl resource abbreviation)
       if [[ {1} == po* ]]; then
         source $SCRIPT_FILE && _exec_into_container $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str} > /dev/tty
       else
@@ -222,11 +224,13 @@ k() {
 }
 
 main() {
+  # Check required dependencies
   local cmd
   for cmd in kubectl fzf; do
-    command -v "$cmd" >/dev/null 2>&1 && continue
-    echo "Error: $cmd is not installed or not in PATH" >&2
-    exit 1
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      echo "Error: $cmd is not installed or not in PATH" >&2
+      exit 1
+    fi
   done
   k "$@"
 }
