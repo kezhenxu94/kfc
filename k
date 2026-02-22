@@ -22,30 +22,22 @@ _resolve_context_namespace() {
   echo "$ctx" "${ns:-default}"
 }
 
-_list_containers() {
-  local ctx="$1" res="$2" name="$3"; shift 3
-  kubectl --context "$ctx" "$@" get "$res/$name" \
-    -o go-template='{{range .spec.template.spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}{{range .spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}' 2>/dev/null
-}
-
-_select_container_interactive() {
-  local ctx="$1" res="$2" name="$3"; shift 3
-  local enter_action="$1"; shift
-  _list_containers "$ctx" "$res" "$name" "$@" |
-    _run_fzf_picker --ghost='type to search containers' --prompt='container: ' --delimiter=' ' \
-    --bind="enter:execute:$enter_action"
-}
-
 _exec_into_container() {
   local ctx="$1" res="$2" name="$3"; shift 3
-  _select_container_interactive "$ctx" "$res" "$name" \
-    "kubectl --context $ctx $* exec -it $res/$name -c {1} \
-      -- sh -c 'command -v bash >/dev/null && exec bash || exec sh'" "$@"
+  kubectl --context "$ctx" "$@" get "$res/$name" \
+    -o go-template='{{range .spec.template.spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}{{range .spec.containers}}{{.name}} {{.image}}{{"\n"}}{{end}}' 2>/dev/null |
+    _run_fzf_picker --ghost='type to search containers' --prompt='container: ' --delimiter=' ' \
+    --bind="enter:execute:kubectl --context $ctx $* exec -it $res/$name -c {1} -- sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
 }
 
 _view_resource_yaml() {
   local ctx="$1" res="$2" name="$3"; shift 3
   kubectl --context "$ctx" "$@" get "$res/$name" -o yaml 2>/dev/null | _view_in_editor -c "set ft=yaml" - > /dev/tty
+}
+
+_describe_resource() {
+  local ctx="$1" res="$2" name="$3"; shift 3
+  kubectl --context "$ctx" "$@" describe "$res/$name" 2>/dev/null | _view_in_editor - > /dev/tty
 }
 
 _browse_resource_types() {
@@ -101,14 +93,8 @@ _browse_resources() {
   local cmd="kubectl $kubectl_list_cmd 2>/dev/null | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
 
   local kubectl_base_flags="--context $ctx${ns_flag_str:+ $ns_flag_str}"
-  local enter_bind="enter:become(printf '${ns_flag_str:+$ns_flag_str }%s' $name_field)"
-  local header=">> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<"
-
-  # Default ghost text and bindings (non-namespaced resources)
   local ghost_text='C-t switch type | C-r reload'
   local ctrl_n_bind='ctrl-n:ignore'
-
-  # Add namespace-switching capability for namespaced resources
   if [[ "$namespaced" != false ]]; then
     ghost_text='C-t switch type | C-n switch namespace | C-r reload'
     ctrl_n_bind="ctrl-n:become(source $SCRIPT_FILE && _browse_namespaces $ctx $res)"
@@ -118,21 +104,21 @@ _browse_resources() {
     --ghost="$ghost_text" \
     --multi $multi_flag \
     --prompt="[$ctx|$display_ns] $res > " \
-    --header="$header" \
+    --header=$'>> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (describe) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<' \
     --preview-window=hidden,right,border-left \
     --bind="start:reload:$cmd" \
     --bind="ctrl-r:reload($cmd)" \
     --bind="ctrl-t:become(source $SCRIPT_FILE && _browse_resource_types $ctx $ns)" \
     --bind="$ctrl_n_bind" \
-    --bind="$enter_bind" \
+    --bind="enter:become(printf '${ns_flag_str:+$ns_flag_str }%s' $name_field)" \
     --bind="ctrl-y:execute:source $SCRIPT_FILE && _view_resource_yaml $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str}" \
+    --bind="ctrl-o:execute:source $SCRIPT_FILE && _describe_resource $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str}" \
     --bind="ctrl-e:execute:kubectl $kubectl_base_flags edit {1} $name_field" \
     --bind="ctrl-x:execute:
       delete_cmd=\"kubectl $kubectl_base_flags delete {1} $name_field\"
       echo \$delete_cmd && echo -n 'Run the command above? (y/N): ' && read confirm && \
         [[ \$confirm =~ ^[Yy]\$ ]] && eval \$delete_cmd" \
     --bind="ctrl-s:execute:
-      # 'po*' matches pod/pods (kubectl resource abbreviation)
       if [[ {1} == po* ]]; then
         source $SCRIPT_FILE && _exec_into_container $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str} > /dev/tty
       else
@@ -221,18 +207,6 @@ k() {
   esac
 }
 
-main() {
-  # Check required dependencies
-  local cmd
-  for cmd in kubectl fzf; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-      echo "Error: $cmd is not installed or not in PATH" >&2
-      exit 1
-    fi
-  done
-  k "$@"
-}
-
 _kfc_widget() {
   [[ -z "$commands[kubectl]" ]] && return
   local result
@@ -256,4 +230,9 @@ fi
 (
   [[ -n $ZSH_VERSION && $ZSH_EVAL_CONTEXT =~ :file$ ]] ||
   [[ -n $BASH_VERSION ]] && (return 0 2>/dev/null)
-) || main "$@"
+) || {
+  for cmd in kubectl fzf; do
+    command -v "$cmd" >/dev/null 2>&1 || { echo "Error: $cmd is not installed or not in PATH" >&2; exit 1; }
+  done
+  k "$@"
+}
