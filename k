@@ -6,7 +6,8 @@ _run_fzf_picker() {
   local state_file=$(mktemp)
   echo "hidden" > "$state_file"
   trap 'rm -f "$state_file"' EXIT
-  fzf --layout=reverse --info='inline: | ' --pointer=' ' --scrollbar='' "$@" \
+  fzf --layout=reverse --info='inline: | ' --pointer='' --scrollbar='' \
+    --preview-window=hidden,right,border-left,wrap "$@" \
     --bind="ctrl-p:toggle-preview+transform([[ \$(cat $state_file) = hidden ]] && echo visible > $state_file || echo hidden > $state_file)" \
     --bind="ctrl-u:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-up || echo half-page-up)" \
     --bind="ctrl-d:transform([[ \$(cat $state_file) = visible ]] && echo preview-half-page-down || echo half-page-down)"
@@ -47,8 +48,7 @@ _browse_resource_types() {
   _run_fzf_picker --header-lines=1 --ghost='type to search resource types...' \
     --prompt="[$ctx|$ns] resources> " \
     --header=$'>> enter (browse) | C-r (reload) | C-p (preview) <<\n' \
-    --preview-window=hidden,right,border-left \
-    --bind="start:reload:($cmd)" \
+    --bind="start:trigger(ctrl-r)" \
     --bind="ctrl-r:reload:($cmd)" \
     --bind="enter:become(
       source $SCRIPT_FILE
@@ -64,7 +64,6 @@ _select_namespace() {
   kubectl --context "$ctx" get ns --no-headers -o custom-columns=':metadata.name' 2>/dev/null |
     _run_fzf_picker --prompt="$prompt" \
       --header=$'>> enter (select) | C-p (preview) <<\n' \
-      --preview-window=hidden,right,border-left \
       --preview="kubectl --context $ctx describe ns {}" \
       --bind='enter:become:(echo {1})'
 }
@@ -93,43 +92,72 @@ _browse_resources() {
   local cmd="kubectl $kubectl_list_cmd 2>/dev/null | sed -e '1s#^#TYPE  #' -e '2,\$s#^#$res  #'"
 
   local kubectl_base_flags="--context $ctx${ns_flag_str:+ $ns_flag_str}"
+  local sockfile="/tmp/kfc-$$.sock"
+  local pidfile="/tmp/kfc-$$.pid"
+  local debouncefile="/tmp/kfc-$$.debounce"
+  local cmdfile="/tmp/kfc-$$.cmd"
+  local watch_start="
+    kubectl $kubectl_list_cmd --watch-only --no-headers 2>/dev/null |
+      while IFS= read -r _; do
+        if [[ ! -f $debouncefile ]]; then
+          touch $debouncefile
+          curl -s --unix-socket $sockfile http -d 'reload:(sh $cmdfile)' 2>/dev/null
+        fi
+      done &
+    echo \$! > $pidfile"
+  local watch_stop="[[ -f $pidfile ]] && kill \$(cat $pidfile) 2>/dev/null; rm -f $pidfile $debouncefile"
+  printf '%s' "$cmd" > "$cmdfile"
   local ghost_text='C-t switch type | C-r reload'
   local ctrl_n_bind='ctrl-n:ignore'
   if [[ "$namespaced" != false ]]; then
     ghost_text='C-t switch type | C-n switch namespace | C-r reload'
-    ctrl_n_bind="ctrl-n:become(source $SCRIPT_FILE && _browse_namespaces $ctx $res)"
+    ctrl_n_bind="ctrl-n:become($watch_stop; rm -f $sockfile $cmdfile; source $SCRIPT_FILE && _browse_namespaces $ctx $res)"
   fi
 
   _run_fzf_picker --header-lines=1 -d " +" --separator='' --with-nth="2.." \
     --ghost="$ghost_text" \
     --multi $multi_flag \
     --prompt="[$ctx|$display_ns] $res > " \
-    --header=$'>> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (describe) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) <<' \
-    --preview-window=hidden,right,border-left \
+    --header=$'>> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (describe) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) | C-\\ (watch) <<' \
+    --listen="$sockfile" \
     --bind="start:reload:$cmd" \
+    --bind="load:execute-silent(rm -f $debouncefile)" \
     --bind="ctrl-r:reload($cmd)" \
-    --bind="ctrl-t:become(source $SCRIPT_FILE && _browse_resource_types $ctx $ns)" \
+    --bind="ctrl-t:become($watch_stop; rm -f $sockfile $cmdfile; source $SCRIPT_FILE && _browse_resource_types $ctx $ns)" \
     --bind="$ctrl_n_bind" \
-    --bind="enter:become(printf '${ns_flag_str:+$ns_flag_str }%s' $name_field)" \
-    --bind="ctrl-y:execute:source $SCRIPT_FILE && _view_resource_yaml $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str}" \
-    --bind="ctrl-o:execute:source $SCRIPT_FILE && _describe_resource $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str}" \
-    --bind="ctrl-e:execute:kubectl $kubectl_base_flags edit {1} $name_field" \
+    --bind="enter:become($watch_stop; rm -f $sockfile $cmdfile; printf '${ns_flag_str:+$ns_flag_str }%s' $name_field)" \
+    --bind="ctrl-y:execute:$watch_stop; source $SCRIPT_FILE && _view_resource_yaml $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str}" \
+    --bind="ctrl-o:execute:$watch_stop; source $SCRIPT_FILE && _describe_resource $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str}" \
+    --bind="ctrl-e:execute:$watch_stop; kubectl $kubectl_base_flags edit {1} $name_field" \
     --bind="ctrl-x:execute:
       delete_cmd=\"kubectl $kubectl_base_flags delete {1} $name_field\"
       echo \$delete_cmd && echo -n 'Run the command above? (y/N): ' && read confirm && \
         [[ \$confirm =~ ^[Yy]\$ ]] && eval \$delete_cmd" \
     --bind="ctrl-s:execute:
+      $watch_stop
       if [[ {1} == po* ]]; then
         source $SCRIPT_FILE && _exec_into_container $ctx {1} $name_field${ns_flag_str:+ $ns_flag_str} > /dev/tty
       else
         echo -n 'Enter the replicas: ' && read replicas && \
           [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl $kubectl_base_flags scale --replicas=\$replicas {1} $name_field
       fi" \
-    --bind="ctrl-l:execute:kubectl $kubectl_base_flags logs {1}/$name_field -f; \
+    --bind="ctrl-l:execute:$watch_stop; kubectl $kubectl_base_flags logs {1}/$name_field -f; \
       echo -n 'Press any key to continue:' && read" \
-    --bind="ctrl-f:execute:echo -n 'Enter local:remote port (e.g., 8080:80): ' && read ports && \
+    --bind="ctrl-f:execute:$watch_stop; echo -n 'Enter local:remote port (e.g., 8080:80): ' && read ports && \
       kubectl $kubectl_base_flags port-forward $name_field \$ports > /dev/tty" \
+    --bind="ctrl-\\:execute-silent:
+      if [[ -f $pidfile ]]; then
+        $watch_stop
+        curl -s --unix-socket $sockfile http \
+          -d 'change-header:>> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (describe) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) | C-\\ (watch) <<' 2>/dev/null
+      else
+        $watch_start
+        curl -s --unix-socket $sockfile http \
+          -d 'change-header:>> enter (select) | C-e (edit) | C-f (forward) | C-l (logs) | C-o (describe) | C-s (ssh/scale) | C-x (delete) | C-y (yaml) | C-p (preview) | C-\\ (watch: ON) <<' 2>/dev/null
+      fi" \
     --preview="kubectl $kubectl_base_flags describe {1} $name_field"
+  eval "$watch_stop"
+  rm -f "$sockfile" "$cmdfile"
 }
 
 k() {
