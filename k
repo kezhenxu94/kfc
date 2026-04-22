@@ -43,7 +43,7 @@ _describe_resource() {
 
 _browse_resource_types() {
   local ctx="$1" ns="$2"
-  local cmd="kubectl api-resources --verbs=list -o wide 2>/dev/null | sort"
+  local cmd="kubectl --context $ctx api-resources --verbs=list -o wide 2>/dev/null | sort"
 
   _run_fzf_picker --header-lines=1 --ghost='type to search resource types...' \
     --prompt="[$ctx|$ns] resources> " \
@@ -52,11 +52,23 @@ _browse_resource_types() {
     --bind="ctrl-r:reload:($cmd)" \
     --bind="enter:become(
       source $SCRIPT_FILE
-      local namespaced={4}
-      [[ \$namespaced != true && \$namespaced != false ]] && namespaced={3}
-      _browse_resources $ctx $ns {1} \$namespaced
+      local namespaced={4} apiversion={3}
+      if [[ \$namespaced != true && \$namespaced != false ]]; then
+        namespaced={3}; apiversion={2}
+      fi
+      local group=\${apiversion%/*}
+      [[ \$group == \$apiversion ]] && group=''
+      local res={1}
+      [[ -n \$group ]] && res={1}.\$group
+      _browse_resources $ctx $ns \$res \$namespaced
     )" \
-    --preview='kubectl explain {1}'
+    --preview='
+      namespaced={4}; apiversion={3}
+      [[ $namespaced != true && $namespaced != false ]] && apiversion={2}
+      group=${apiversion%/*}
+      [[ $group == $apiversion ]] && group=""
+      res={1}; [[ -n $group ]] && res={1}.$group
+      kubectl explain $res'
 }
 
 _select_namespace() {
