@@ -153,8 +153,12 @@ _browse_resources() {
         echo -n 'Enter the replicas: ' && read replicas && \
           [[ \$replicas =~ ^[0-9]+\$ ]] && kubectl $kubectl_base_flags scale --replicas=\$replicas {1} $name_field
       fi" \
-    --bind="ctrl-l:execute:$watch_stop; kubectl $kubectl_base_flags logs {1}/$name_field -f; \
-      echo -n 'Press any key to continue:' && read" \
+    --bind="ctrl-l:execute:
+      $watch_stop
+      _saved_stty=\$(stty -g 2>/dev/null)
+      kubectl $kubectl_base_flags logs {1}/$name_field -f
+      stty \"\$_saved_stty\" 2>/dev/null
+      echo -n 'Press any key to continue:' && read _" \
     --bind="ctrl-f:execute:$watch_stop; echo -n 'Enter local:remote port (e.g., 8080:80): ' && read ports && \
       kubectl $kubectl_base_flags port-forward $name_field \$ports > /dev/tty" \
     --bind="ctrl-\\:execute-silent:
